@@ -1,89 +1,17 @@
 name: AI Auto Push - Meta AI Builders
-
 on:
-  repository_dispatch:
-    types: [ai-push]
+  push:
+    branches: [main]
   workflow_dispatch:
-    inputs:
-      commit_message:
-        description: 'Commit message from Meta AI'
-        required: false
-        default: 'AI: Phase update - foundation + add-on model'
-      zip_url:
-        description: 'Optional URL to zip (if AI hosted file externally)'
-        required: false
-        default: ''
-
 jobs:
-  build-and-push:
+  gates:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    
     steps:
-      - name: Checkout with PAT
-        uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GH_PAT }}
-          fetch-depth: 0
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-
-      - name: Handle AI push via repository_dispatch
-        if: github.event_name == 'repository_dispatch'
-        run: |
-          echo "Received AI push: ${{ github.event.client_payload.commit_message }}"
-          # Files will be committed by AI via API, this job just runs quality gates
-          # If payload contains base64 files, decode them here (for future)
-          echo '${{ toJson(github.event.client_payload) }}' > payload.json
-          cat payload.json
-
-      - name: Handle manual zip_url push
-        if: github.event_name == 'workflow_dispatch' && inputs.zip_url != ''
-        run: |
-          echo "Downloading AI build from ${{ inputs.zip_url }}"
-          curl -L "${{ inputs.zip_url }}" -o ai-build.zip
-          unzip -o ai-build.zip -d .
-          rm ai-build.zip
-
-      - name: Run Quality Gates - 3 Checkers
-        run: |
-          echo "=== Gate 1: Parity check ==="
-          if [ -f "backend/scripts/check_parity.py" ]; then
-            python backend/scripts/check_parity.py
-          else
-            echo "check_parity.py not yet - skipping (Phase 0)"
-          fi
-          
-          echo "=== Gate 2: Accounting guardian ==="
-          if [ -f "backend/scripts/accounting_guardian.py" ]; then
-            python backend/scripts/accounting_guardian.py
-          else
-            echo "accounting_guardian not yet - skipping"
-          fi
-          
-          echo "=== Gate 3: Security guardian - PCI check ==="
-          # Fail if card_number, cvv, pan found - only pm_xxx/cus_xxx/sub_xxx allowed
-          if grep -r "card_number\|cvv\|\"pan\"" backend/ --include="*.py" | grep -v "pm_xxx\|cus_xxx"; then
-            echo "SECURITY FAIL: card data found - only pm_xxx/cus_xxx/sub_xxx allowed"
-            exit 1
-          fi
-          echo "Security check passed"
-
-          echo "=== Gate 4: Tests ==="
-          if [ -d "backend/tests" ]; then
-            pip install -r backend/requirements.txt || pip install fastapi sqlalchemy pytest
-            python -m pytest backend/tests/ -q || echo "tests failed but not blocking Phase 0"
-          fi
-
-      - name: Commit and push if changes from zip_url
-        if: github.event_name == 'workflow_dispatch' && inputs.zip_url != ''
-        run: |
-          git config user.name "Meta AI Builder"
-          git config user.email "ai-builder@meta.ai"
-          git add .
-          git diff --staged --quiet || git commit -m "${{ inputs.commit_message }}"
-          git push origin main
+      - run: pip install -r backend/requirements.txt
+      - run: cd backend && python scripts/check_parity.py
+      - run: cd backend && python scripts/security_guardian.py
+      - run: cd backend && pytest -v
