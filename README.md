@@ -1,2 +1,2 @@
-# propertymanagment
-property from meta
+# PropertyManagment SaaS Phase 0
+Base + Add-ons
